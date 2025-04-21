@@ -1,0 +1,224 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Evolução da Participação Acionária</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/css/bootstrap.min.css" rel="stylesheet">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+        .chart-container {
+            position: relative;
+            height: 60vh;
+            width: 100%;
+        }
+        .loading {
+            display: none;
+            text-align: center;
+            padding: 20px;
+        }
+        .legend-container {
+            max-height: 400px;
+            overflow-y: auto;
+            padding: 10px;
+            border: 1px solid #ddd;
+            border-radius: 5px;
+            margin-top: 20px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container mt-4">
+        <h1 class="mb-4">Evolução da Participação Acionária</h1>
+        
+        <div class="row mb-4">
+            <div class="col-md-4">
+                <div class="card">
+                    <div class="card-header">
+                        <h5 class="card-title mb-0">Selecione a Empresa</h5>
+                    </div>
+                    <div class="card-body">
+                        <select class="form-select" id="companySelect">
+                            <option value="">Selecione uma empresa</option>
+                            {% for company in companies %}
+                            <option value="{{ company.cnpj }}">{{ company.nome }}</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                    <div class="card-footer">
+                        <button class="btn btn-primary" onclick="loadData()">Carregar Dados</button>
+                    </div>
+                </div>
+            </div>
+            <div class="col-md-8">
+                <div class="loading" id="loading">
+                    <div class="spinner-border text-primary" role="status">
+                        <span class="visually-hidden">Carregando...</span>
+                    </div>
+                    <p class="mt-2">Carregando dados...</p>
+                </div>
+
+                <div class="chart-container">
+                    <canvas id="shareholderChart"></canvas>
+                </div>
+            </div>
+        </div>
+
+        <div class="row">
+            <div class="col-12">
+                <div class="legend-container" id="legendContainer">
+                    <!-- Legend will be populated here -->
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let shareholderChart = null;
+        const loading = document.getElementById('loading');
+        const legendContainer = document.getElementById('legendContainer');
+        const companySelect = document.getElementById('companySelect');
+
+        // Função para carregar os dados
+        function loadData() {
+            const selectedCnpj = companySelect.value;
+            
+            if (!selectedCnpj) {
+                alert('Por favor, selecione uma empresa');
+                return;
+            }
+
+            loading.style.display = 'block';
+            
+            fetch(`/api/company/data?cnpj=${selectedCnpj}`)
+                .then(response => response.json())
+                .then(data => {
+                    if (data.error) {
+                        alert(data.error);
+                        return;
+                    }
+
+                    // Processa os dados para o formato do Chart.js
+                    const processedData = processDataForChart(data);
+                    
+                    // Atualiza ou cria o gráfico
+                    updateChart(processedData);
+                    loading.style.display = 'none';
+                })
+                .catch(error => {
+                    console.error('Erro ao carregar dados:', error);
+                    alert('Erro ao carregar dados da empresa');
+                    loading.style.display = 'none';
+                });
+        }
+
+        function processDataForChart(data) {
+            // Agrupa dados por acionista
+            const shareholders = {};
+            data.forEach(item => {
+                if (!shareholders[item.acionista]) {
+                    shareholders[item.acionista] = {};
+                }
+                shareholders[item.acionista][item.ano] = item.percentual_total;
+            });
+
+            // Cria datasets para cada acionista
+            const datasets = [];
+            const colors = [
+                '#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd',
+                '#8c564b', '#e377c2', '#7f7f7f', '#bcbd22', '#17becf',
+                '#aec7e8', '#ffbb78', '#98df8a', '#ff9896', '#c5b0d5',
+                '#c49c94', '#f7b6d2', '#c7c7c7', '#dbdb8d', '#9edae5'
+            ];
+
+            Object.entries(shareholders).forEach(([shareholder, data], index) => {
+                const years = Object.keys(data).sort();
+                const percentages = years.map(year => data[year]);
+                const lastPercentage = percentages[percentages.length - 1];
+
+                datasets.push({
+                    label: `${shareholder} (${lastPercentage.toFixed(2)}%)`,
+                    data: percentages,
+                    borderColor: colors[index % colors.length],
+                    backgroundColor: colors[index % colors.length],
+                    fill: false,
+                    tension: 0.1,
+                    borderWidth: 2
+                });
+            });
+
+            return {
+                labels: Object.keys(shareholders[Object.keys(shareholders)[0]]).sort(),
+                datasets: datasets
+            };
+        }
+
+        function updateChart(data) {
+            const ctx = document.getElementById('shareholderChart').getContext('2d');
+
+            if (shareholderChart) {
+                shareholderChart.destroy();
+            }
+
+            shareholderChart = new Chart(ctx, {
+                type: 'line',
+                data: data,
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    scales: {
+                        y: {
+                            beginAtZero: true,
+                            title: {
+                                display: true,
+                                text: 'Participação (%)'
+                            },
+                            ticks: {
+                                callback: function(value) {
+                                    return value + '%';
+                                }
+                            }
+                        },
+                        x: {
+                            title: {
+                                display: true,
+                                text: 'Ano'
+                            }
+                        }
+                    },
+                    plugins: {
+                        legend: {
+                            display: false
+                        },
+                        tooltip: {
+                            callbacks: {
+                                label: function(context) {
+                                    return `${context.dataset.label.split(' (')[0]}: ${context.parsed.y.toFixed(2)}%`;
+                                }
+                            }
+                        }
+                    }
+                }
+            });
+
+            // Atualiza a legenda personalizada
+            updateCustomLegend(data.datasets);
+        }
+
+        function updateCustomLegend(datasets) {
+            const legendHtml = datasets.map(dataset => {
+                const color = dataset.borderColor;
+                const label = dataset.label;
+                return `
+                    <div class="d-flex align-items-center mb-2">
+                        <div style="width: 20px; height: 20px; background-color: ${color}; margin-right: 10px;"></div>
+                        <span>${label}</span>
+                    </div>
+                `;
+            }).join('');
+
+            legendContainer.innerHTML = legendHtml;
+        }
+    </script>
+</body>
+</html> 
